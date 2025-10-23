@@ -3,8 +3,9 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import InputPanel from './components/InputPanel';
 import OutputPanel from './components/OutputPanel';
 import AgentManagerModal from './components/AgentManagerModal';
-import { generateSalesResponse, transcribeAudio } from './services/geminiService';
-import type { BusinessParams, GeminiOutput, Agent } from './types';
+import { startChat, sendMessage, transcribeAudio } from './services/geminiService';
+import type { BusinessParams, ChatMessage, Agent } from './types';
+import type { Chat } from '@google/genai';
 
 const UNIVERSAL_ASSISTANT_PROMPT = `
 SYSTEM PROMPT — Assistente Universal de Atendimento & Vendas
@@ -71,94 +72,218 @@ Sugestão de follow-up se não houver resposta em 24–48h
 {NomeCliente?} | {Interesse} | {TicketEstimado} | {EtapaFunil: Lead/Qualificado/Proposta/Fechamento} | {PróximaAção} | {Deadline} | {Observações}
 `;
 
-const HOT_SEDUCE_ASSISTANT_PROMPT = `
-🧠 SYSTEM INSTRUCTION — “HOT SEDUCE ASSISTANT”
-🔹 PAPEL E PROPÓSITO
+const UNIVERSAL_ASSISTANT_PROMPT_ADDON = `
+---
+MODO DE OPERAÇÃO: CHAT DIRETO
 
-Você é uma inteligência especialista em conversas de direct (DM) com foco em atração, condução e conversão de leads usando o Método SEDUCE da HOT.
-Seu papel é ajudar mentoras, infoprodutoras e equipes de vendas a transformar interações no direct em relacionamentos que viram PIX, guiando na criação e execução de mensagens personalizadas dentro dos fluxos:
+Você agora está em um modo de chat direto com o usuário, que é o seu operador (um vendedor, mentor, etc.), não o cliente final. Sua interface mudou de um gerador de respostas para uma conversa contínua.
 
-Tô Afim (ativação inicial),
+Sua tarefa é agir como um assistente de bate-papo inteligente e prestativo.
 
-Oi Sumida (reconexão),
+- **Conversa Fluida:** Responda de forma natural, direta e humana, como se estivessem conversando no WhatsApp. Abandone o formato estruturado de "Mensagem Principal", "Alternativas", etc., a menos que o usuário peça explicitamente por isso.
+- **Contexto é Rei:** Mantenha o contexto da conversa. Lembre-se das mensagens anteriores para dar respostas coerentes.
+- **Entrada do Usuário:**
+  - **Texto:** Responda diretamente à pergunta ou comentário.
+  - **Áudio:** O sistema irá transcrever um áudio do usuário e apresentar o texto para você. Sua tarefa é LER a transcrição e responder ao conteúdo dela como se o usuário tivesse digitado aquele texto. Não mencione o processo de transcrição. Apenas responda à mensagem.
+  - **Imagem:** Se o usuário enviar uma imagem, analise-a, extraia a informação relevante para a conversa e use-a na sua resposta.
+- **Seu Objetivo:** Ajudar o usuário a formular respostas para os clientes dele, dar conselhos de vendas, ou qualquer outra tarefa de assistência comercial, tudo dentro de um fluxo de chat.
+`;
 
-CDP – Cliente Cara de Pix (fechamento).
+const HOT_SEDUCE_ASSISTANT_PROMPT = `SYSTEM INSTRUCTION — Conversas em Pix (SEDUCE Universal)
+Papel
 
-🔹 TOM DE VOZ E ESTILO DE COMUNicação
+Você é uma IA especialista em conversas de direct que aplica o Método SEDUCE da HOT para transformar conversas em PIX.
+Opera nos fluxos Tô Afim, Oi Sumida e CDP (Cliente Cara de Pix), adaptando-se a qualquer nicho (mentoria, marketing, loja, pet shop, clínica, etc.) e a qualquer canal (WhatsApp, Instagram Direct, ligação, videochamada, presencial).
 
-Tom: leve, empático, permissivo, humano e estrategicamente envolvente.
+Entrada & Contexto (multimodal)
 
-Linguagem natural, ritmo de chat (Instagram / WhatsApp).
+Texto: mensagem normal do usuário.
 
-Usa nome próprio e conexão sincera (“Amei ver você por aqui, Lu!”).
+Áudio: transcreva automaticamente (“🗣️ Transcrição: …”) e responda com base nisso.
 
-Evita formalidade e jargões corporativos.
+Imagem/print: descreva só o que for útil (mensagens, telas, produtos, documentos) e use como contexto.
 
-Emojis pontuais (🔥😉✨) apenas para humanizar.
+Parâmetros do app (painel rápido) — sempre considerar antes de responder:
 
-Conduz com curiosidade e acolhimento, nunca com pressão.
+Canal: WhatsApp | Direct | Ligação | Vídeo | Presencial
 
-Costuma devolver uma pergunta aberta para manter o diálogo fluido.
+Etapa: Atendimento (descoberta) | Condução | Fechamento
 
-🔹 ESTRUTURA DE RESPOSTA (MÉTODO SEDUCE)
+Tipo de negócio: texto livre (ex.: pet shop, mentoria, estética…)
 
-1. Ativação → Detectar se há sinal verde (RSV) e responder com energia + conexão emocional.
-2. Condução → Nome + motivo do contato + conexão sincera + pergunta que levanta a bola.
-3. Conversão → Acolhimento + oferta de ajuda (com permissão).
+Objetivo imediato: Agendar | Enviar orçamento | Fechar pagamento | Marcar visita
 
-📋 Formatação visual:
+Se algum parâmetro não vier, infira com bom senso pelo conteúdo; não invente dados de produto/preço.
 
-Parágrafos curtos e bullets.
+Método SEDUCE — Esqueleto invisível
 
-CTA humanizado no final (“Quer que eu te mostre como faria no teu caso?”).
+Regra-mãe: Responder sempre usando a estrutura SEDUCE, sem parecer robô.
 
-🔹 REGRAS DE COMPORTAMENTO
+1) Ativação
 
-Sempre seguir a estrutura SEDUCE.
+RSV (sinal verde): detectar interesse real.
 
-Jamais responder se não houver sinal verde.
+Se não houver RSV, esquentar (curiosidade, empatia, pergunta leve).
 
-Aplicar a Regra do Esquenta: responder sempre um pouco mais do que a lead trouxe.
+Proibido empurrar vendas sem RSV.
 
-Evitar tom robótico, frio ou de venda forçada.
+2) Condução
 
-Manter confidencialidade total do Método HOT.
+Nome + conexão sincera + motivo do contato + pergunta que levanta a bola (dor/desejo/contexto).
 
-Nunca inventar fatos, criar dados sensíveis ou prometer resultados irreais.
+Ajustar vocabulário ao tipo de negócio e ao canal.
 
-Bloqueio automático pós-26/12/2025 (mensagem de expiração).
+3) Conversão
 
-🔹 SAÍDA PADRÃO (sempre nesse formato)
+Acolher + oferta com permissão (link, agenda, proposta, visita, checkout).
 
-1️⃣ Mensagem principal:
-Texto pronto para envio no direct (humano, empático, estratégico).
+Fechamento leve com 1 pergunta de avanço (“Prefere A ou B?”).
 
-2️⃣ Alternativas:
+Fluxos
 
-Versão curta (1–2 linhas).
+Tô Afim
 
-Versão detalhada (explicativa ou técnica).
+Condução: Nome + motivo + conexão + pergunta.
 
-3️⃣ Roteiro de áudio (20–40s):
-Transcrição falada natural, com pausas suaves, sem jargões.
+Conversão: Acolhimento + oferta com permissão.
 
-4️⃣ Próximo passo / CTA:
-Pergunta ou convite leve para avançar (ex: “Quer que eu te mostre como seria na prática?”).
+Oi Sumida
 
-5️⃣ Checklist interno (não enviar):
+Ativação: comentário empático/positivo sem tom de venda.
 
-Intenção da lead
+Condução: aprofundar conexão + pergunta.
 
-Emoção dominante
+Conversão: acolhimento + oferta.
 
-Temperatura (fria, morna, quente)
+CDP (Cliente Cara de Pix)
 
-Etapa (Ativação / Condução / Conversão)
+Ativação: nome + saudação com promessa concreta + valorização da troca + foco no agora.
 
-Sugestão de follow-up 24–48h
+Condução: aprofundar conexão + pergunta.
 
-6️⃣ Campos para CRM (não enviar):
-Nome | Interesse | Ticket | Etapa | Próx. Ação | Deadline | Observações
+Conversão: acolhimento + oferta objetiva.
+
+Regras de aplicação
+
+Sempre usar SEDUCE como lógica interna.
+
+Nunca ignorar contexto, prints e histórico.
+
+Regra do Esquenta: responder um pouco mais do que a lead trouxe.
+
+Sem RSV: não avançar venda; aqueça primeiro.
+
+Adaptar oferta ao ticket e ao objetivo imediato.
+
+Nada de jargão técnico (“SDR”, “closer” etc.). Use linguagem comum.
+
+Sem promessas irreais e sem inventar dados.
+
+Adaptação por Canal (essencial)
+
+WhatsApp: frases curtas, respostas diretas, CTA simples.
+
+Instagram Direct: mais leve/acolhedor, uma pergunta aberta pra manter fluidez.
+
+Ligação/Vídeo: priorize roteiro falado (20–40s) quando pedido.
+
+Presencial/Visita: foque em agendamento e confirmações claras.
+
+Formatação visual (mensagem limpa)
+
+Parágrafos curtos e respiro entre ideias (duas quebras de linha).
+
+Negrito apenas p/ 2–3 termos-chave.
+
+Bullets (• ou ➤) só quando houver sequência real.
+
+Emojis sutis (🔥💛✨😉) — não poluir.
+
+Termine com pergunta de avanço.
+
+Links/CTAs em linha separada com 👉.
+
+Saídas obrigatórias
+
+1) Mensagem principal (pronta pra enviar) — estilo do canal + SEDUCE aplicado.
+2) Alternativas (opcional):
+
+Curta (1–2 linhas)
+
+Detalhada (se o usuário pedir mais dados)
+3) Roteiro de áudio (20–40s) quando solicitado (sem números “robóticos”; fale “mil duzentos e noventa e sete”).
+4) Próximo passo + CTA (sempre).
+5) Mini-checklist interno (não enviar): intenção, RSV (sim/não), temperatura (fria/morna/quente), etapa SEDUCE, follow-up 24–48h.
+6) Campos CRM (não enviar): Nome | Interesse | Ticket | Etapa | Próx. Ação | Deadline | Observações.
+
+Function calling (quando disponível)
+
+{
+  "functions": {
+    "agendar_horario": {
+      "description": "Agendar conversa/diagnóstico/visita",
+      "parameters": {"nome":"string","data_preferida":"string","canal":"string"}
+    },
+    "gerar_link_pagamento": {
+      "description": "Gerar link de checkout seguro",
+      "parameters": {"nome":"string","produto":"string","valor":"number","metodo":"string"}
+    },
+    "registrar_crm": {
+      "description": "Registrar lead/status no CRM",
+      "parameters": {"nome":"string","interesse":"string","etapa":"string","temperatura":"string","observacoes":"string"}
+    },
+    "enviar_orcamento": {
+      "description": "Criar e enviar orçamento",
+      "parameters": {"nome":"string","itens":"array","valor_total":"number"}
+    }
+  }
+}
+
+
+Exemplos rápidos (aplicar SEDUCE + canal)
+
+Pet shop · WhatsApp · Atendimento · Objetivo: Agendar
+
+Oi, Ju 💛
+
+Vi que tu quer infos do banho e tosa do teu pet.
+• O banho inclui escovação e secagem completa.
+• O valor depende do porte — me diz o tamanho dele?
+
+Quer que eu te mande 2 horários ainda hoje pra facilitar?
+👉 Posso reservar e te confirmar aqui mesmo.
+
+Mentoria · Direct · Condução · Objetivo: Enviar proposta
+
+Amei te ver por aqui, Lu! ✨
+Posso te mostrar como a mentoria funciona e os 2 ganhos mais rápidos que as alunas relatam?
+
+Se curtir, te mando uma proposta enxuta com próximos passos.
+👉 Prefere ver primeiro um caso real ou já quer a proposta?
+
+Marketing · WhatsApp · Fechamento · Objetivo: Checkout
+
+Show, Ana! Pra começar leve, o plano inicial cobre diagnóstico + 1 campanha validando oferta.
+Fica entre R$ 900–1.400 conforme escopo.
+
+Quer que eu gere o link de pagamento agora ou prefere que eu te mande 3 horários pra alinharmos em 15 min?
+👉 Posso criar o link em PIX/cartão.
+
+Ética e limites
+
+Respeitar privacidade; não coletar dado sensível desnecessário.
+
+Sem manipulação emocional; foco em clareza e permissão.
+
+Se fugir do escopo (médico/jurídico/financeiro com promessa), redirecionar com elegância.
+
+Modo de segurança (se aplicável):
+Se a data atual ultrapassar a validade definida pela HOT, retorne mensagem de expiração e solicite reativação.
+
+Identidade: HOT_SEDUCE_ASSISTANT_universal — Conversas em Pix 🔥
+
+Instrução final:
+Em toda resposta, aplique SEDUCE como lógica interna, adapte-se ao canal e ao tipo de negócio, mantenha formatação limpa, conduza a microavanços com permissão e sempre entregue Mensagem pronta + CTA (e, quando pedido, Roteiro de áudio).
 `;
 
 const AGENTS_STORAGE_KEY = 'ai-sales-assistant-agents';
@@ -166,8 +291,6 @@ const AGENTS_STORAGE_KEY = 'ai-sales-assistant-agents';
 const App: React.FC = () => {
   const [customerMessage, setCustomerMessage] = useState('');
   const [uploadedImage, setUploadedImage] = useState<{ file: File, base64: string, mimeType: string } | null>(null);
-  const [audioForTranscription, setAudioForTranscription] = useState<Blob | null>(null);
-  const [transcribedText, setTranscribedText] = useState('');
   
   const [businessParams, setBusinessParams] = useState<BusinessParams>({
     empresa: '', setorExemplo: '', oferta: '', promessaChave: '',
@@ -175,12 +298,11 @@ const App: React.FC = () => {
     regras: '', provas: '', idiomaPadrao: 'pt-BR',
   });
   
-  const [useThinkingMode, setUseThinkingMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [output, setOutput] = useState<GeminiOutput | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
@@ -188,22 +310,34 @@ const App: React.FC = () => {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const chatRef = useRef<Chat | null>(null);
 
   // Load agents from localStorage or set defaults
   useEffect(() => {
     try {
       const storedAgents = localStorage.getItem(AGENTS_STORAGE_KEY);
+      const defaultAgents: Agent[] = [
+        { id: 'default-universal-assistant', name: 'Assistente Universal de Vendas', prompt: UNIVERSAL_ASSISTANT_PROMPT + UNIVERSAL_ASSISTANT_PROMPT_ADDON, isDefault: true },
+        { id: 'default-hot-seduce-assistant', name: 'HOT Seduce Assistant', prompt: HOT_SEDUCE_ASSISTANT_PROMPT, isDefault: true },
+      ];
+
       if (storedAgents) {
-        const parsedAgents = JSON.parse(storedAgents);
-        setAgents(parsedAgents);
-        if (parsedAgents.length > 0) {
-          setSelectedAgentId(parsedAgents[0].id);
+        const parsedAgents: Agent[] = JSON.parse(storedAgents);
+        // Ensure default agents are up-to-date
+        const updatedAgents = defaultAgents.map(defaultAgent => {
+            const storedDefault = parsedAgents.find(p => p.id === defaultAgent.id);
+            return storedDefault ? { ...storedDefault, prompt: defaultAgent.prompt, name: defaultAgent.name } : defaultAgent;
+        });
+        const customAgents = parsedAgents.filter(p => !p.isDefault);
+        
+        const finalAgents = [...updatedAgents, ...customAgents];
+        setAgents(finalAgents);
+
+        if (finalAgents.length > 0) {
+          const defaultSelection = finalAgents.find(a => a.isDefault);
+          setSelectedAgentId(defaultSelection ? defaultSelection.id : finalAgents[0].id);
         }
       } else {
-        const defaultAgents: Agent[] = [
-          { id: 'default-universal-assistant', name: 'Assistente Universal de Vendas', prompt: UNIVERSAL_ASSISTANT_PROMPT, isDefault: true },
-          { id: 'default-hot-seduce-assistant', name: 'HOT Seduce Assistant', prompt: HOT_SEDUCE_ASSISTANT_PROMPT, isDefault: true },
-        ];
         setAgents(defaultAgents);
         setSelectedAgentId(defaultAgents[0].id);
       }
@@ -223,6 +357,21 @@ const App: React.FC = () => {
     }
   }, [agents]);
 
+  // Initialize or re-initialize chat when context changes
+  useEffect(() => {
+    const selectedAgent = agents.find(a => a.id === selectedAgentId);
+    if (selectedAgent) {
+        try {
+            chatRef.current = startChat(selectedAgent.prompt, businessParams);
+            setMessages([]);
+            setError(null);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Falha ao iniciar o chat.");
+            console.error(e);
+        }
+    }
+  }, [selectedAgentId, businessParams, agents]);
+
   const handleSaveAgent = (agentToSave: Omit<Agent, 'id'> & { id?: string }) => {
     setAgents(prevAgents => {
       if (agentToSave.id) { // Update existing
@@ -240,21 +389,16 @@ const App: React.FC = () => {
         if (selectedAgentId === agentId && newAgents.length > 0) {
             setSelectedAgentId(newAgents[0].id);
         } else if (newAgents.length === 0) {
-            // Handle case where all agents are deleted
             setSelectedAgentId('');
         }
         return newAgents;
     });
   };
 
-
   const startRecording = useCallback(async () => {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-                sampleRate: 16000,
-                channelCount: 1,
-            }
+            audio: { sampleRate: 16000, channelCount: 1 }
         });
         mediaRecorderRef.current = new MediaRecorder(stream);
         mediaRecorderRef.current.ondataavailable = (event) => {
@@ -262,7 +406,6 @@ const App: React.FC = () => {
         };
         mediaRecorderRef.current.onstop = () => {
             const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-            setAudioForTranscription(audioBlob);
             handleTranscription(audioBlob);
             audioChunksRef.current = [];
             stream.getTracks().forEach(track => track.stop());
@@ -283,12 +426,49 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const handleSendMessage = async (messageText: string, image: { file: File, base64: string, mimeType: string } | null) => {
+      if (!chatRef.current) {
+          setError("Sessão de chat não iniciada. Selecione um agente.");
+          return;
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      try {
+          const responseText = await sendMessage(chatRef.current, messageText, image);
+          const modelMessage: ChatMessage = {
+              id: `model-${Date.now()}`,
+              role: 'model',
+              text: responseText,
+          };
+          setMessages(prev => [...prev, modelMessage]);
+      } catch (err) {
+          console.error(err);
+          const errorMessage = err instanceof Error ? err.message : 'Ocorreu um erro desconhecido.';
+          setError(errorMessage);
+          setMessages(prev => prev.slice(0, -1)); // Remove the user message if sending failed
+      } finally {
+          setIsLoading(false);
+      }
+  };
+
   const handleTranscription = async (blob: Blob) => {
     setIsTranscribing(true);
     setError(null);
     try {
         const text = await transcribeAudio(blob);
-        setTranscribedText(text);
+        
+        const transcriptionMessage: ChatMessage = {
+            id: `user-transcription-${Date.now()}`,
+            role: 'user',
+            text: `🗣️ Transcrição: ${text}`,
+            isTranscription: true,
+        };
+        setMessages(prev => [...prev, transcriptionMessage]);
+        
+        await handleSendMessage(text, null);
+
     } catch (err) {
         console.error(err);
         setError("Falha ao transcrever o áudio.");
@@ -298,35 +478,23 @@ const App: React.FC = () => {
   };
 
   const handleGenerate = async () => {
-    if (!customerMessage.trim()) {
-        setError("Por favor, insira a mensagem do cliente.");
+    if (!customerMessage.trim() && !uploadedImage) {
+        setError("Por favor, insira uma mensagem ou imagem.");
         return;
     }
-    const selectedAgent = agents.find(a => a.id === selectedAgentId);
-    if (!selectedAgent) {
-        setError("Nenhum agente de IA selecionado.");
-        return;
-    }
+    
+    const userMessage: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        text: customerMessage,
+        ...(uploadedImage && { imagePreview: URL.createObjectURL(uploadedImage.file) })
+    };
+    setMessages(prev => [...prev, userMessage]);
+    
+    await handleSendMessage(customerMessage, uploadedImage);
 
-    setIsLoading(true);
-    setError(null);
-    setOutput(null);
-
-    try {
-      const result = await generateSalesResponse(
-        customerMessage,
-        uploadedImage,
-        businessParams,
-        useThinkingMode,
-        selectedAgent.prompt
-      );
-      setOutput(result);
-    } catch (err) {
-      console.error(err);
-      setError(err instanceof Error ? err.message : 'Ocorreu um erro desconhecido.');
-    } finally {
-      setIsLoading(false);
-    }
+    setCustomerMessage('');
+    setUploadedImage(null);
   };
 
   return (
@@ -334,23 +502,19 @@ const App: React.FC = () => {
     <div className="min-h-screen text-hot-white flex flex-col items-center p-4 sm:p-6 lg:p-8">
       <header className="w-full max-w-7xl mb-8 text-center">
         <h1 className="text-4xl sm:text-5xl font-bold text-hot-white tracking-wider" style={{ textShadow: '0 0 10px rgba(209,0,0,0.7)' }}>Assistente de Vendas IA</h1>
-        <p className="mt-2 text-lg text-hot-white/80">Transforme mensagens de clientes em respostas prontas para fechar negócios.</p>
+        <p className="mt-2 text-lg text-hot-white/80">Converse com seu assistente para criar respostas e fechar negócios.</p>
       </header>
       <main className="w-full max-w-7xl flex flex-col lg:flex-row gap-8 flex-grow">
         <InputPanel 
           customerMessage={customerMessage}
           setCustomerMessage={setCustomerMessage}
           setUploadedImage={setUploadedImage}
-          setAudioForTranscription={setAudioForTranscription}
           isRecording={isRecording}
           isTranscribing={isTranscribing}
           startRecording={startRecording}
           stopRecording={stopRecording}
-          transcribedText={transcribedText}
           businessParams={businessParams}
           setBusinessParams={setBusinessParams}
-          useThinkingMode={useThinkingMode}
-          setUseThinkingMode={setUseThinkingMode}
           onGenerate={handleGenerate}
           isLoading={isLoading}
           agents={agents}
@@ -359,7 +523,7 @@ const App: React.FC = () => {
           onManageAgents={() => setIsAgentModalOpen(true)}
         />
         <OutputPanel 
-          output={output}
+          messages={messages}
           isLoading={isLoading}
           error={error}
         />

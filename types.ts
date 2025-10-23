@@ -17,21 +17,10 @@ export interface BusinessParams {
   idiomaPadrao: string;
 }
 
-export interface GeminiOutput {
-  mensagemPrincipal: string;
-  alternativaCurta: string;
-  alternativaDetalhada: string;
-  scriptAudio: string;
-  proximoPasso: string;
-  checklistIntencao: string;
-  checklistObstaculo: string;
-  checklistProntidao: string;
-  checklistFollowUp: string;
-  crmNome: string;
-  crmInteresse: string;
-  crmTicket: string;
-  crmEtapa: string;
-  crmProximaAcao: string;
-  crmDeadline: string;
-  crmObservacoes: string;
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'model';
+  text: string;
+  imagePreview?: string;
+  isTranscription?: boolean;
 }
