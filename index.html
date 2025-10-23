@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Assistente de Vendas IA</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              'hot-black': '#0C0000',
+              'hot-red': '#D10000',
+              'hot-red-dark': '#8B0000',
+              'hot-white': '#EAEAEA',
+              'hot-white-soft': '#F8F5F0',
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: #0C0000;
+            background-image: radial-gradient(circle at top left, rgba(209, 0, 0, 0.2) 0%, transparent 30%),
+                              radial-gradient(circle at bottom right, rgba(209, 0, 0, 0.2) 0%, transparent 30%);
+            background-attachment: fixed;
+        }
+        .hot-glow {
+            box-shadow: 0 0 15px rgba(209, 0, 0, 0.4), 0 0 5px rgba(209, 0, 0, 0.3);
+        }
+        .hot-glow-light {
+            box-shadow: 0 0 8px rgba(209, 0, 0, 0.3);
+        }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.26.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0"
+  }
+}
+</script>
+</head>
+  <body class="antialiased text-hot-white-soft">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

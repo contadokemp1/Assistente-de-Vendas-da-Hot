@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Assistente Universal de Atendimento & Vendas",
+  "description": "An AI-powered universal assistant that transforms customer messages (text, audio, image) into ready-to-send responses, focusing on clarity, persuasion, and advancing the sales funnel.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
